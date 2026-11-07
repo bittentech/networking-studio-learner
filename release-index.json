@@ -1,0 +1,13 @@
+{
+  "releases": [
+    {
+      "part": 8,
+      "revision": 1,
+      "tag": "learner-p08-r1",
+      "youtube": "https://www.youtube.com/watch?v=aQCqgKIEpHA",
+      "release": "https://github.com/bittentech/networking-studio-learner/releases/tag/learner-p08-r1",
+      "download": "https://github.com/bittentech/networking-studio-learner/releases/download/learner-p08-r1/Networking-Studio-Learner-Parts-01-08-r1.zip",
+      "sha256": "c0e37d3250da15a6db7347ec062d9abe2adee176b68b097187db6513846bdfd0"
+    }
+  ]
+}
