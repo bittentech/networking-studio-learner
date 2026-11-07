@@ -1,6 +1,11 @@
 name: Publish reviewed learner release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/publish_learner.py'
+      - '.github/workflows/publish-learner.yml'
   schedule:
     - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
@@ -11,25 +16,36 @@ on:
         default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: learner-release
   cancel-in-progress: false
 
 jobs:
-  publish:
-    if: github.repository_owner == 'bittentech'
+  smoke-check:
+    if: github.repository_owner == 'bittentech' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    steps:
+    env:
+      CHECK_ONLY: 'true'
+    steps: &publisher-steps
       - name: Check the reviewed draft and YouTube status
         env:
           GH_TOKEN: ${{ github.token }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          CHECK_ONLY: ${{ inputs.check_only }}
         run: |
           gh api -H 'Accept: application/vnd.github.raw+json' \
             "repos/$GITHUB_REPOSITORY/contents/.github/scripts/publish_learner.py?ref=$GITHUB_SHA" \
             > "$RUNNER_TEMP/publish_learner.py"
           python3 "$RUNNER_TEMP/publish_learner.py"
+
+  publish:
+    if: github.repository_owner == 'bittentech' && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      CHECK_ONLY: ${{ inputs.check_only }}
+    steps: *publisher-steps
