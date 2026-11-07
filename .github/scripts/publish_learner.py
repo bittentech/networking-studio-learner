@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from base64 import b64decode, b64encode
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -14,6 +15,8 @@ INITIAL_PART = 8
 PUBLIC_CHECK_VIDEO = 'aQCqgKIEpHA'
 TAG = re.compile(r'learner-p(\d{2,})-r([1-9]\d*)', re.ASCII)
 REVIEW = re.compile(r'<!-- learner-review (\{[^\n]+\}) -->\r?\n\r?\n')
+PUBLIC_VIDEO = re.compile(r'<!-- learner-release video: ([\w-]{11}) -->', re.ASCII)
+INDEX_PATH = '/contents/release-index.json'
 
 
 def version(release):
@@ -25,7 +28,7 @@ def asset_name(part, revision):
     return f'Networking-Studio-Learner-Parts-01-{part:02d}-r{revision}.zip'
 
 
-def read_json(url, service, headers=None, method='GET', body=None):
+def read_json(url, service, headers=None, method='GET', body=None, allow_missing=False):
     data = json.dumps(body).encode() if body is not None else None
     request = Request(url, data=data, headers=headers or {}, method=method)
     if data is not None:
@@ -34,6 +37,8 @@ def read_json(url, service, headers=None, method='GET', body=None):
         with urlopen(request, timeout=30) as response:
             return json.load(response)
     except HTTPError as error:
+        if error.code == 404 and allow_missing:
+            return None
         raise RuntimeError(f'{service} returned HTTP {error.code}.') from None
     except (URLError, TimeoutError, ValueError):
         raise RuntimeError(f'Could not read a valid response from {service}.') from None
@@ -113,12 +118,45 @@ def publish_next(github, public_check, check_only):
     if check_only:
         print('The next draft passed the ZIP and YouTube checks. Check-only mode made no changes.')
         return
-    body = f'{notes}\n\nSHA-256 `{digest}`'.strip()
+    body = f'<!-- learner-release video: {video_id} -->\n\n{notes}\n\nSHA-256 `{digest}`'.strip()
     result = github(f'/releases/{draft["id"]}', 'PATCH',
                     {'body': body, 'draft': False, 'make_latest': 'true'})
     if result['draft'] or result['tag_name'] != draft['tag_name']:
         raise RuntimeError('GitHub did not confirm publication of the reviewed release.')
     print(f'Published {result["tag_name"]}.')
+
+
+def sync_release_index(github):
+    records = []
+    for release in get_releases(github):
+        release_version = version(release)
+        if release['draft'] or not release_version:
+            continue
+        part, revision = release_version
+        match = PUBLIC_VIDEO.match(release.get('body') or '')
+        video = match.group(1) if match else PUBLIC_CHECK_VIDEO if release_version == (INITIAL_PART, 1) else None
+        assets = release['assets']
+        if (not video or len(assets) != 1 or assets[0]['name'] != asset_name(part, revision)
+                or assets[0]['state'] != 'uploaded'
+                or not re.fullmatch(r'sha256:[a-f0-9]{64}', assets[0].get('digest') or '')):
+            raise RuntimeError(f'Published release {release["tag_name"]} lacks verified index metadata.')
+        records.append({'part': part, 'revision': revision, 'tag': release['tag_name'],
+                        'youtube': f'https://www.youtube.com/watch?v={video}',
+                        'release': release['html_url'], 'download': assets[0]['browser_download_url'],
+                        'sha256': assets[0]['digest'].removeprefix('sha256:')})
+    records.sort(key=lambda item: (item['part'], item['revision']))
+    if not records:
+        return
+    data = (json.dumps({'releases': records}, indent=2) + '\n').encode('utf-8')
+    current = github(INDEX_PATH, allow_missing=True)
+    if current and b64decode(current['content']) == data:
+        return
+    payload = {'message': f'Index learner releases through Part {records[-1]["part"]}',
+               'content': b64encode(data).decode('ascii')}
+    if current:
+        payload['sha'] = current['sha']
+    github(INDEX_PATH, 'PUT', payload)
+    print('Updated the public release index.')
 
 
 def main():
@@ -127,8 +165,8 @@ def main():
                'Authorization': f'Bearer {os.environ["GH_TOKEN"]}',
                'X-GitHub-Api-Version': '2022-11-28'}
 
-    def github(path, method='GET', body=None):
-        return read_json(f'https://api.github.com/repos/{repo}{path}', 'GitHub', headers, method, body)
+    def github(path, method='GET', body=None, allow_missing=False):
+        return read_json(f'https://api.github.com/repos/{repo}{path}', 'GitHub', headers, method, body, allow_missing)
 
     def check_public(video_id):
         key = os.environ.get('YOUTUBE_API_KEY')
@@ -136,7 +174,10 @@ def main():
             raise RuntimeError('Configure the YOUTUBE_API_KEY repository secret.')
         return video_is_public(video_id, key)
 
-    publish_next(github, check_public, os.environ.get('CHECK_ONLY') == 'true')
+    check_only = os.environ.get('CHECK_ONLY') == 'true'
+    publish_next(github, check_public, check_only)
+    if not check_only:
+        sync_release_index(github)
 
 
 if __name__ == '__main__':
