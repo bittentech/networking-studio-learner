@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 CHANNEL_ID = 'UC3PsooDxvFG0aEBe4JVtAbg'
 INITIAL_PART = 8
+PUBLIC_CHECK_VIDEO = 'aQCqgKIEpHA'
 TAG = re.compile(r'learner-p(\d{2,})-r([1-9]\d*)', re.ASCII)
 REVIEW = re.compile(r'<!-- learner-review (\{[^\n]+\}) -->\r?\n\r?\n')
 
@@ -100,6 +101,10 @@ def publish_next(github, public_check, check_only):
     draft = next_draft(get_releases(github))
     if draft is None:
         print('No reviewed draft is next in the release sequence.')
+        if check_only:
+            if not public_check(PUBLIC_CHECK_VIDEO):
+                raise RuntimeError('YouTube did not return the known public Part 8 video on Bitten Tech.')
+            print('YouTube Data API verified public Part 8 on the Bitten Tech channel.')
         return
     video_id, digest, notes = read_review(draft)
     if not public_check(video_id):
